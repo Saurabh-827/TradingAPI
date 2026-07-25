@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from SmartApi import SmartConnect
 
+from contextlib import asynccontextmanager
+import requests
+
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 import threading
 
@@ -12,7 +15,32 @@ from dotenv import load_dotenv
 # Loading env credentials
 load_dotenv()
 
-app = FastAPI(title="TradingAPI")
+# Global state for token list
+instrument_list = []
+
+# Startup (Auto-Download JSON)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic - on app start 
+    global instrument_list
+    print("Downloading Angel One Scrip Master (this might take 10-15 seconds)....")
+    try:
+        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+        response = requests.get(url)
+        instrument_list = response.json()
+        print(f"Success: Loaded {len(instrument_list)} instruments into memory !")
+    except Exception as e:
+        print(f"Error while loading Scrip Master {e}")
+
+    yield  # Here API goes on running
+
+    # Shutdown logic - on app close
+
+    print("Clear instrument memory...")
+    instrument_list.clear()
+
+# FastAPI instance created with lifespan
+app = FastAPI(title="TradingAPI", lifespan=lifespan)
 
 # Credentials fetching
 API_KEY = os.getenv("ANGEL_API_KEY")
@@ -114,3 +142,29 @@ def login_broker():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Login Failed: {str(e)}")
+
+@app.get("/search-token")
+def search_token(symbol:str, exchange: str="NSE"):
+    if not instrument_list:
+        raise HTTPException(status_code=500, detail="Instrument list not loaded yet")
+
+    # List Comprehension to find matching symbols 
+    # We can check partial match and exact match 
+
+    results = []
+    for item in instrument_list:
+        if symbol.upper() in item['symbol'].upper() and item['exch_seg'] == exchange.upper():
+            results.append({
+                "symbol": item['symbol'],
+                "token" : item['token'],
+                "exchange": item['exch_seg'],
+                "expiry": item.get('expiry', 'NA')
+            })
+
+        if len(results) >= 10:  # Limiting to 10 results
+            break
+
+    if not results:
+        raise HTTPException(status_code=404, detail="No token found for this symbol")
+
+    return {"status": "success", "data": results}
