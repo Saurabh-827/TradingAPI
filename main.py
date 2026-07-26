@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from SmartApi import SmartConnect
 
+import time
 from contextlib import asynccontextmanager
 import requests
 
@@ -65,11 +66,17 @@ class LoginResponse(BaseModel):
     message: str
     tokens: TokenData
 
+class SetTargetSLRequest(BaseModel):
+    token: str
+    target: float
+    sl: float
+
 # WebSocket Live Data State
 
 liv_market_data = {}
 
-
+# active positions 
+active_positions = {}
 
 def start_websocket_stream(jwt_token, feed_token):
     #initializing websocket instance
@@ -79,9 +86,37 @@ def start_websocket_stream(jwt_token, feed_token):
     def on_data(wsapp, message):
         # Tick Data Parsin: On getting new tick, read it and save in state
         token = message.get("token")
-        if token:
-            liv_market_data[token] = message.get("last_traded_price", 0)/100  # diveded by 100 to convert paisa in rupees
-            print(f"Live Price [{token}] : {liv_market_data[token]}")
+        if not token:
+            return
+        
+        current_price = message.get("last_traded_price", 0)/100  # diveded by 100 to convert paisa in rupees
+        liv_market_data[token] = current_price
+        # print(f"Live Price [{token}] : {current_price}")  # commented this for a clear terminal
+
+        # --- FAKE SPIKE FILTER LOGIC ---
+        if token in active_positions and active_positions[token]['status'] == 'ACTIVE':
+            order =  active_positions[token]
+
+            # Condition 1: Check if target price or stop loss hitted 
+            if current_price >= order["target"] or current_price <= order['sl']:
+                # if hitted first time than time will be noted 
+                if order['breach_time'] is None:
+                    order['breach_time'] = time.time()
+                    print(f"[{token}] ALERT: Price reached {current_price}. Verification started...")
+
+                # if reached before than check time passed
+                else:
+                    time_elapsed = time.time() - order["breach_time"]
+                    
+                    if time_elapsed >= 2.5: # 2.5 seconds sustai
+                        print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
+                        active_positions[token]["status"] = "EXITED"
+                    # here we have to send order to broker
+            else:
+                # Condition 2: if price comes again where it was than ( Fake Spike )
+                if order["breach_time"] is not None:
+                    print(f"[{token}] FAKE SPIKE DETECTED & IGNORED! Price returned to {current_price}.")
+                    order["breach_time"] = None # Time reset
 
     def on_open(wsapp):
         print("Websocket connected successfully")
@@ -168,3 +203,21 @@ def search_token(symbol:str, exchange: str="NSE"):
         raise HTTPException(status_code=404, detail="No token found for this symbol")
 
     return {"status": "success", "data": results}
+
+@app.post("/set-position")
+def set_position(data: SetTargetSLRequest):
+    """
+    Sets active monitoring parameters (Target & SL) for a specific token.
+    """
+    active_positions[data.token] = {
+        "target": data.target,
+        "sl": data.sl,
+        "breach_time": None,
+        "status": "ACTIVE"
+    }
+    
+    return {
+        "status": "success",
+        "message": f"Monitoring started for Token {data.token}",
+        "data": active_positions[data.token]
+    }
