@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from SmartApi import SmartConnect
 
+import json
+from datetime import datetime
+
 import time
 from contextlib import asynccontextmanager
 import requests
@@ -19,19 +22,44 @@ load_dotenv()
 # Global state for token list
 instrument_list = []
 
-# Startup (Auto-Download JSON)
+# Startup (Auto-Download JSON with Caching)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic - on app start 
     global instrument_list
-    print("Downloading Angel One Scrip Master (this might take 10-15 seconds)....")
-    try:
-        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url)
-        instrument_list = response.json()
-        print(f"Success: Loaded {len(instrument_list)} instruments into memory !")
-    except Exception as e:
-        print(f"Error while loading Scrip Master {e}")
+    file_path = "scrip_master.json"
+    download_needed = True
+
+    # Check if file exists and is downloaded today
+    if os.path.exists(file_path):
+        file_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
+        today_date = datetime.now().date()
+
+        if file_date == today_date:
+            download_needed = False
+            print("Local Scrip Master found for today. Loading from disk...")
+
+    if download_needed:
+        print("Downloading Angel One Scrip Master (this might take 10-15 seconds)....")
+        try:
+            url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+            response = requests.get(url)
+            instrument_list = response.json()
+
+            # Save it locally for next time
+            with open(file_path, "w") as f:
+                json.dump(instrument_list, f)
+            print(f"Success: Downloaded and saved {len(instrument_list)} instruments into locally!")
+        except Exception as e:
+            print(f"Error while loading Scrip Master {e}")
+    else:
+        # load from local file
+        try:
+            with open(file_path, "r") as f:
+                instrument_list = json.load(f)
+            print(f"Success: Loaded {len(instrument_list)} instruments from local cache in 1 second!")
+        except Exception as e:
+            print(f"Error while loading local Scrip Master {e}")
 
     yield  # Here API goes on running
 
@@ -85,9 +113,11 @@ def start_websocket_stream(jwt_token, feed_token):
     # Define callbacks INSIDE so they can use 'sws' automatically (crashing websocket)
     def on_data(wsapp, message):
         # Tick Data Parsin: On getting new tick, read it and save in state
-        token = message.get("token")
-        if not token:
+        raw_token = message.get("token")
+        if not raw_token:
             return
+
+        token = raw_token
         
         current_price = message.get("last_traded_price", 0)/100  # diveded by 100 to convert paisa in rupees
         liv_market_data[token] = current_price
@@ -122,7 +152,7 @@ def start_websocket_stream(jwt_token, feed_token):
         print("Websocket connected successfully")
         # Token Subscription:
         # Exchange type : 5 (for MCX), 2(NSEFO), 1(NSE)
-        subscription_list = [{"exchangeType": 1, "tokens" : ["3045"]}]  # token IDs are specfic, currently taking dummy ID (sbi)
+        subscription_list = [{"exchangeType": 5, "tokens" : ["573628"]}]  # token IDs are specfic, currently taking dummy ID (sbi)
         sws.subscribe("spike_filter_stream", 1, subscription_list)
 
     def on_error(wsapp, error):
