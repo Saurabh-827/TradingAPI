@@ -258,3 +258,44 @@ def set_position(data: SetTargetSLRequest):
         "message": f"Monitoring started for Token {data.token}",
         "data": active_positions[data.token]
     }
+
+@app.get("/get-positions")
+def get_positions():
+
+    # Check Login Status
+    if not is_broker_connected:
+        raise HTTPException(status_code=401, detail="Broker not connected. Please login first by hitting /login endpoint.")
+
+    try:
+        # Get position books from broker
+        response = smartApi.position()
+        if response.get("status") == False :
+            raise HTTPException(status_code=400, detail=response.get("message", "Failed to fetch positions"))
+
+        positions_data = response.get("data", [])
+
+        # Filter ACTIVE open positions
+        open_positions = []
+        for pos in positions_data:
+            # converting int because angelone's netqty comes as str
+            net_qty= int(pos.get("netqty", 0))
+
+            if net_qty != 0:
+                open_positions.append({
+                    "symbol": pos.get("tradingsymbol"),
+                    "token": pos.get("symboltoken"),
+                    "exchange": pos.get("exchange"),
+                    "net_qty": net_qty,
+                    "buy_price": float(pos.get("buyavgprice", 0)),
+                    "pnl": pos.get("pnl", "0.00"),
+                    "product_type": pos.get("producttype") # INTRADAY, CARRYFORWARD, etc.
+                })
+                
+        return {
+            "status": "Success",
+            "total_open_positions": len(open_positions),
+            "data": open_positions,
+            "raw_data": positions_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching positions: {e}")
