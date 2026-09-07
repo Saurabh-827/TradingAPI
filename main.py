@@ -97,6 +97,11 @@ class SetTargetSLRequest(BaseModel):
     token: str
     target: float
     sl: float
+    tradingsymbol: str
+    exchange: str
+    quantity: int
+    exit_type: str = "SELL"
+    product_type: str = "INTRADAY"
 
 # WebSocket Live Data State
 liv_market_data = {}
@@ -249,6 +254,11 @@ def set_position(data: SetTargetSLRequest):
     active_positions[data.token] = {
         "target": data.target,
         "sl": data.sl,
+        "tradingsymbol": data.tradingsymbol,
+        "exchange": data.exchange,
+        "quantity": data.quantity,
+        "exit_type": data.exit_type,
+        "product_type": data.product_type,
         "breach_time": None,
         "status": "ACTIVE"
     }
