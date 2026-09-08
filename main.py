@@ -112,6 +112,40 @@ active_positions = {}
 # Flag to check login status
 is_broker_connected = False
 
+def execute_exit_order(token: str, order_info: dict):
+    """
+    Places a MARKET EXIT order via Angel One SmartApi when target or SL is confirmed.
+    """
+    try:
+        print(f"[{token}] INITIATING REAL EXIT ORDER...")
+        
+        orderparams = {
+            "variety": "NORMAL",
+            "tradingsymbol": order_info["tradingsymbol"],
+            "symboltoken": str(token),
+            "transactiontype": order_info["exit_type"], 
+            "exchange": order_info["exchange"],
+            "ordertype": "MARKET",  
+            "producttype": order_info["product_type"],
+            "duration": "DAY",
+            "quantity": str(order_info["quantity"])
+        }
+
+        # Broker ko Order bhejna
+        response = smartApi.placeOrder(orderparams)
+        
+        if response and response.get("status"):
+            order_id = response.get("data")
+            print(f"[{token}] ORDER EXECUTED SUCCESSFULLY! Order ID: {order_id}")
+            return order_id
+        else:
+            print(f"[{token}] BROKER REJECTED ORDER: {response.get('message')}")
+            return None
+
+    except Exception as e:
+        print(f"[{token}] CRITICAL ORDER FAILED: {str(e)}")
+        return None
+
 def start_websocket_stream(jwt_token, feed_token):
     # Initializing websocket instance
     sws = SmartWebSocketV2(jwt_token, API_KEY, CLIENT_ID, feed_token)
@@ -149,6 +183,7 @@ def start_websocket_stream(jwt_token, feed_token):
                         print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
                         active_positions[token]["status"] = "EXITED"
                         # Here we will send the order to the broker
+                        execute_exit_order(token, order)
             else:
                 # Condition 2: If price returns to normal range (Fake Spike)
                 if order["breach_time"] is not None:
@@ -174,7 +209,10 @@ def start_websocket_stream(jwt_token, feed_token):
     sws.on_close = on_close
 
     # Connect function is blocking, that's why we call it in a thread 
-    sws.connect()
+    try:
+        sws.connect()
+    except Exception as e:
+        print(f"Critical Error: WebSocket failed to connect or crashed - {str(e)}")
 
 @app.get("/")
 def home():
