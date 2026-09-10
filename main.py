@@ -112,6 +112,21 @@ active_positions = {}
 # Flag to check login status
 is_broker_connected = False
 
+# Global websocket instance
+sws = None
+
+def get_exchange_type(exchange: str) -> int:
+    """Angel one convert exchange's strings to numeric id"""
+    mapping = {
+        "NSE": 1,
+        "NFO": 2,
+        "BSE": 3,
+        "MCX": 5,
+        "NCDEX": 7,
+        "CDS": 13
+    }
+    return mapping.get(exchange.upper(), 1)  # Default 1(NSE)
+
 def execute_exit_order(token: str, order_info: dict):
     """
     Places a MARKET EXIT order via Angel One SmartApi when target or SL is confirmed.
@@ -147,6 +162,8 @@ def execute_exit_order(token: str, order_info: dict):
         return None
 
 def start_websocket_stream(jwt_token, feed_token):
+    global sws
+
     # Initializing websocket instance
     sws = SmartWebSocketV2(jwt_token, API_KEY, CLIENT_ID, feed_token)
 
@@ -191,11 +208,7 @@ def start_websocket_stream(jwt_token, feed_token):
                     order["breach_time"] = None # Time reset
 
     def on_open(wsapp):
-        print("Websocket connected successfully")
-        # Token Subscription:
-        # Exchange type: 5 (MCX), 2 (NSEFO), 1 (NSE)
-        subscription_list = [{"exchangeType": 5, "tokens" : ["573628"]}]  # Token IDs are specific, currently taking a dummy ID
-        sws.subscribe("spike_filter_stream", 1, subscription_list)
+        print("Websocket connected successfully. Waiting for dynamic subscriptions...")
 
     def on_error(wsapp, error):
         print(f"Websocket Error: {error}")
@@ -286,7 +299,7 @@ def set_position(data: SetTargetSLRequest):
     """
     Sets active monitoring parameters (Target & SL) for a specific token.
     """
-    if not is_broker_connected:
+    if not is_broker_connected or sws is None:
         raise HTTPException(status_code=401, detail="Broker not connected. Please login first by hitting /login endpoint.")
     
     active_positions[data.token] = {
@@ -300,6 +313,18 @@ def set_position(data: SetTargetSLRequest):
         "breach_time": None,
         "status": "ACTIVE"
     }
+
+    # Dynamic Websocket subscription
+    try:
+        exch_type = get_exchange_type(data.exchange)
+        subscription_list = [{"exchangeType": exch_type, "tokens": [data.token]}]
+
+        sws.subscribe("dynamic_sub", 1, subscription_list)
+        print(f"ON: Automatically subscribed Token {data.token} ({data.tradingsymbol}) to live stream!")
+    except Exception as e:
+        print(f"Failed to subscribe WebSocket for token {data.token}: {e}")
+        del active_positions[data.token]
+        raise HTTPException(status_code=500, detail="WebSocket subscription failed")
     
     return {
         "status": "success",
