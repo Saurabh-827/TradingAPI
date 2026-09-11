@@ -102,6 +102,7 @@ class SetTargetSLRequest(BaseModel):
     quantity: int
     exit_type: str = "SELL"
     product_type: str = "INTRADAY"
+    linked_token: str = None
 
 # WebSocket Live Data State
 liv_market_data = {}
@@ -200,7 +201,18 @@ def start_websocket_stream(jwt_token, feed_token):
                         print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
                         active_positions[token]["status"] = "EXITED"
                         # Here we will send the order to the broker
-                        execute_exit_order(token, order)
+                        order_id = execute_exit_order(token, order)
+
+                        # Auto-hedge companion exit 
+                        if order_id and order.get("linked_token"):
+                            comp_token = order["linked_token"]
+
+                            if comp_token in active_positions and active_positions[comp_token]["status"] == "ACTIVE":
+                                print(f"[{token}] HEDGE BROKEN! Triggering instant auto-exit for companion token {comp_token}...")
+
+                                companion_order = active_positions[comp_token]
+                                active_positions[comp_token]["status"] = "EXITED"
+                                execute_exit_order(comp_token, companion_order)
             else:
                 # Condition 2: If price returns to normal range (Fake Spike)
                 if order["breach_time"] is not None:
@@ -310,6 +322,7 @@ def set_position(data: SetTargetSLRequest):
         "quantity": data.quantity,
         "exit_type": data.exit_type,
         "product_type": data.product_type,
+        "linked_token": data.linked_token,
         "breach_time": None,
         "status": "ACTIVE"
     }
