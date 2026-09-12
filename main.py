@@ -116,6 +116,12 @@ is_broker_connected = False
 # Global websocket instance
 sws = None
 
+# --- Session Globals for Reconnection ---
+current_jwt_token  = None
+current_feed_token = None
+reconnect_attempts = 0
+
+
 def get_exchange_type(exchange: str) -> int:
     """Angel one convert exchange's strings to numeric id"""
     mapping = {
@@ -220,13 +226,47 @@ def start_websocket_stream(jwt_token, feed_token):
                     order["breach_time"] = None # Time reset
 
     def on_open(wsapp):
+        global reconnect_attempts
+        reconnect_attempts = 0  # Reset reconnect counter on successful connect
+
         print("Websocket connected successfully. Waiting for dynamic subscriptions...")
+        # --- AUTO-RESUBSCRIBE ---
+
+        if active_positions:
+            print("Restoring active subscriptions after connection...")
+            for token, pos_data in active_positions.items():
+                if pos_data["status"] == "ACTIVE":
+                    exch_type = get_exchange_type(pos_data["exchange"])
+                    subscription_list = [{"exchangeType": exch_type, "tokens": [token]}]
+
+                    try:
+                        sws.subscribe("dynamic_sub", 1, subscription_list)
+                        print(f"   -> Resubscribed Token: {token}")
+                    except Exception as e:
+                        print(f"   -> Failed to resubscribe {token}: {e}")
 
     def on_error(wsapp, error):
         print(f"Websocket Error: {error}")
 
+    def trigger_reconnect():
+        global reconnect_attempts
+        reconnect_attempts += 1
+
+        wait_time = min(reconnect_attempts * 5, 30) 
+        print(f"Connection lost! Attempting reconnect {reconnect_attempts} in {wait_time} seconds...")
+        time.sleep(wait_time)
+
+        if current_jwt_token and current_feed_token:
+            threading.Thread(
+                target=start_websocket_stream,
+                args=(current_jwt_token, current_feed_token),
+                daemon=True
+            ).start()
+
     def on_close(wsapp):
         print("Websocket connection closed")
+        
+        threading.Thread(target=trigger_reconnect, daemon=True).start()
 
     sws.on_open = on_open
     sws.on_data = on_data
@@ -245,7 +285,7 @@ def home():
 
 @app.post("/login", response_model=LoginResponse)
 def login_broker():
-    global is_broker_connected
+    global is_broker_connected, current_feed_token, current_jwt_token
     try:
         # 1: Generating TOTP
         totp = pyotp.TOTP(TOTP_SECRET).now()
@@ -259,6 +299,10 @@ def login_broker():
         # 3: Extracting token (also needed for websockets)
         auth_token = login_data['data']['jwtToken']
         feed_token = smartApi.getfeedToken()
+
+        # Saving tokens globally for reconnect
+        current_jwt_token = auth_token
+        current_feed_token = feed_token
 
         # Starting WebSocket in a separate thread
         ws_thread = threading.Thread(
