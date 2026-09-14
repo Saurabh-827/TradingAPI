@@ -1,32 +1,31 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from SmartApi import SmartConnect
 
 import json
 from datetime import datetime
 
-import time
 from contextlib import asynccontextmanager
 import requests
 
-from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 import threading
 
 import pyotp
 import os
 from dotenv import load_dotenv
 
+#local imports
+import state
+from models import LoginResponse, SetTargetSLRequest
+from websocket_engine import start_websocket_stream, get_exchange_type
+
 # Loading env credentials
 load_dotenv()
 
-# Global state for token list
-instrument_list = []
 
 # Startup (Auto-Download JSON with Caching)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic - on app start 
-    global instrument_list
     file_path = "scrip_master.json"
     download_needed = True
 
@@ -44,20 +43,20 @@ async def lifespan(app: FastAPI):
         try:
             url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
             response = requests.get(url)
-            instrument_list = response.json()
+            state.instrument_list = response.json()
 
             # Save it locally for next time
             with open(file_path, "w") as f:
-                json.dump(instrument_list, f)
-            print(f"Success: Downloaded and saved {len(instrument_list)} instruments locally!")
+                json.dump(state.instrument_list, f)
+            print(f"Success: Downloaded and saved {len(state.instrument_list)} instruments locally!")
         except Exception as e:
             print(f"Error while loading Scrip Master {e}")
     else:
         # Load from local file
         try:
             with open(file_path, "r") as f:
-                instrument_list = json.load(f)
-            print(f"Success: Loaded {len(instrument_list)} instruments from local cache in 1 second!")
+                state.instrument_list = json.load(f)
+            print(f"Success: Loaded {len(state.instrument_list)} instruments from local cache in 1 second!")
         except Exception as e:
             print(f"Error while loading local Scrip Master {e}")
 
@@ -65,7 +64,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown logic - on app close
     print("Clear instrument memory...")
-    instrument_list.clear()
+    state.instrument_list.clear()
 
 # FastAPI instance created with lifespan
 app = FastAPI(title="TradingAPI", lifespan=lifespan)
@@ -83,219 +82,13 @@ if not all([API_KEY, CLIENT_ID, PIN, TOTP_SECRET]):
 # Creating SmartConnect instance
 smartApi = SmartConnect(api_key=API_KEY)
 
-# Response Models
-class TokenData(BaseModel):
-    jwtToken: str
-    feedToken: str
-
-class LoginResponse(BaseModel):
-    status: str
-    message: str
-    tokens: TokenData
-
-class SetTargetSLRequest(BaseModel):
-    token: str
-    target: float
-    sl: float
-    tradingsymbol: str
-    exchange: str
-    quantity: int
-    exit_type: str = "SELL"
-    product_type: str = "INTRADAY"
-    linked_token: str = None
-
-# WebSocket Live Data State
-liv_market_data = {}
-
-# Active positions 
-active_positions = {}
-
-# Flag to check login status
-is_broker_connected = False
-
-# Global websocket instance
-sws = None
-
-# --- Session Globals for Reconnection ---
-current_jwt_token  = None
-current_feed_token = None
-reconnect_attempts = 0
-
-
-def get_exchange_type(exchange: str) -> int:
-    """Angel one convert exchange's strings to numeric id"""
-    mapping = {
-        "NSE": 1,
-        "NFO": 2,
-        "BSE": 3,
-        "MCX": 5,
-        "NCDEX": 7,
-        "CDS": 13
-    }
-    return mapping.get(exchange.upper(), 1)  # Default 1(NSE)
-
-def execute_exit_order(token: str, order_info: dict):
-    """
-    Places a MARKET EXIT order via Angel One SmartApi when target or SL is confirmed.
-    """
-    try:
-        print(f"[{token}] INITIATING REAL EXIT ORDER...")
-        
-        orderparams = {
-            "variety": "NORMAL",
-            "tradingsymbol": order_info["tradingsymbol"],
-            "symboltoken": str(token),
-            "transactiontype": order_info["exit_type"], 
-            "exchange": order_info["exchange"],
-            "ordertype": "MARKET",  
-            "producttype": order_info["product_type"],
-            "duration": "DAY",
-            "quantity": str(order_info["quantity"])
-        }
-
-        # Broker ko Order bhejna
-        response = smartApi.placeOrder(orderparams)
-        
-        if response and response.get("status"):
-            order_id = response.get("data")
-            print(f"[{token}] ORDER EXECUTED SUCCESSFULLY! Order ID: {order_id}")
-            return order_id
-        else:
-            print(f"[{token}] BROKER REJECTED ORDER: {response.get('message')}")
-            return None
-
-    except Exception as e:
-        print(f"[{token}] CRITICAL ORDER FAILED: {str(e)}")
-        return None
-
-def process_full_exit(token: str, order: dict):
-    """This function will run in a background thread to prevent blocking the WebSocket"""
-
-    order_id = execute_exit_order(token, order)
-
-    if order_id and order.get("linked_token"):
-        comp_token = order["linked_token"]
-
-        if comp_token in active_positions and active_positions[comp_token]["status"] == "ACTIVE":
-            print(f"[{token}] HEDGE BROKEN! Triggering instant auto-exit for companion token {comp_token}...")
-
-            companion_order = active_positions[comp_token]
-            active_positions[comp_token]["status"] = "EXITED"
-            execute_exit_order(comp_token, companion_order)
-              
-
-def start_websocket_stream(jwt_token, feed_token):
-    global sws
-
-    # Initializing websocket instance
-    sws = SmartWebSocketV2(jwt_token, API_KEY, CLIENT_ID, feed_token)
-
-    # Define callbacks INSIDE so they can use 'sws' automatically
-    def on_data(wsapp, message):
-        # Tick Data Parsing: On getting a new tick, read it and save it in state
-        raw_token = message.get("token")
-        if not raw_token:
-            return
-
-        token = raw_token
-        
-        current_price = message.get("last_traded_price", 0) / 100  # Divided by 100 to convert paise to rupees
-        liv_market_data[token] = current_price
-        # print(f"Live Price [{token}] : {current_price}")  # Commented this for a cleaner terminal
-
-        # --- FAKE SPIKE FILTER LOGIC ---
-        if token in active_positions and active_positions[token]['status'] == 'ACTIVE':
-            order = active_positions[token]
-
-            # Condition 1: Check if target price or stop loss is hit 
-            if current_price >= order["target"] or current_price <= order['sl']:
-                
-                # If hit for the first time, record the breach time 
-                if order['breach_time'] is None:
-                    order['breach_time'] = time.time()
-                    print(f"[{token}] ALERT: Price reached {current_price}. Verification started...")
-
-                # If already breached, check elapsed time
-                else:
-                    time_elapsed = time.time() - order["breach_time"]
-                    
-                    if time_elapsed >= 2.5: # 2.5 seconds sustained
-                        print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
-                        active_positions[token]["status"] = "EXITED"
-                        # Here we will send the order to the broker
-                        # --- DECOUPLED EXECUTION (Fire & Forget) ---
-                        threading.Thread(
-                            target=process_full_exit,
-                            args=(token, order),
-                            daemon=True
-                        ).start()
-            else:
-                # Condition 2: If price returns to normal range (Fake Spike)
-                if order["breach_time"] is not None:
-                    print(f"[{token}] FAKE SPIKE DETECTED & IGNORED! Price returned to {current_price}.")
-                    order["breach_time"] = None # Time reset
-
-    def on_open(wsapp):
-        global reconnect_attempts
-        reconnect_attempts = 0  # Reset reconnect counter on successful connect
-
-        print("Websocket connected successfully. Waiting for dynamic subscriptions...")
-        # --- AUTO-RESUBSCRIBE ---
-
-        if active_positions:
-            print("Restoring active subscriptions after connection...")
-            for token, pos_data in active_positions.items():
-                if pos_data["status"] == "ACTIVE":
-                    exch_type = get_exchange_type(pos_data["exchange"])
-                    subscription_list = [{"exchangeType": exch_type, "tokens": [token]}]
-
-                    try:
-                        sws.subscribe("dynamic_sub", 1, subscription_list)
-                        print(f"   -> Resubscribed Token: {token}")
-                    except Exception as e:
-                        print(f"   -> Failed to resubscribe {token}: {e}")
-
-    def on_error(wsapp, error):
-        print(f"Websocket Error: {error}")
-
-    def trigger_reconnect():
-        global reconnect_attempts
-        reconnect_attempts += 1
-
-        wait_time = min(reconnect_attempts * 5, 30) 
-        print(f"Connection lost! Attempting reconnect {reconnect_attempts} in {wait_time} seconds...")
-        time.sleep(wait_time)
-
-        if current_jwt_token and current_feed_token:
-            threading.Thread(
-                target=start_websocket_stream,
-                args=(current_jwt_token, current_feed_token),
-                daemon=True
-            ).start()
-
-    def on_close(wsapp):
-        print("Websocket connection closed")
-
-        threading.Thread(target=trigger_reconnect, daemon=True).start()
-
-    sws.on_open = on_open
-    sws.on_data = on_data
-    sws.on_error = on_error
-    sws.on_close = on_close
-
-    # Connect function is blocking, that's why we call it in a thread 
-    try:
-        sws.connect()
-    except Exception as e:
-        print(f"Critical Error: WebSocket failed to connect or crashed - {str(e)}")
-
 @app.get("/")
 def home():
     return {"message": "Welcome to the Trading API"}
 
 @app.post("/login", response_model=LoginResponse)
 def login_broker():
-    global is_broker_connected, current_feed_token, current_jwt_token
+
     try:
         # 1: Generating TOTP
         totp = pyotp.TOTP(TOTP_SECRET).now()
@@ -311,8 +104,8 @@ def login_broker():
         feed_token = smartApi.getfeedToken()
 
         # Saving tokens globally for reconnect
-        current_jwt_token = auth_token
-        current_feed_token = feed_token
+        state.current_jwt_token = auth_token
+        state.current_feed_token = feed_token
 
         # Starting WebSocket in a separate thread
         ws_thread = threading.Thread(
@@ -322,7 +115,7 @@ def login_broker():
         )
         ws_thread.start()
         
-        is_broker_connected = True
+        state.is_broker_connected = True
 
         return {
             "status": "success",
@@ -337,13 +130,13 @@ def login_broker():
 
 @app.get("/search-token")
 def search_token(symbol: str, exchange: str = "NSE"):
-    if not instrument_list:
+    if not state.instrument_list:
         raise HTTPException(status_code=500, detail="Instrument list not loaded yet")
 
     # List Comprehension to find matching symbols 
     # We can check partial match and exact match 
     results = []
-    for item in instrument_list:
+    for item in state.instrument_list:
         if symbol.upper() in item['symbol'].upper() and item['exch_seg'] == exchange.upper():
             results.append({
                 "symbol": item['symbol'],
@@ -365,10 +158,10 @@ def set_position(data: SetTargetSLRequest):
     """
     Sets active monitoring parameters (Target & SL) for a specific token.
     """
-    if not is_broker_connected or sws is None:
+    if not state.is_broker_connected or state.sws is None:
         raise HTTPException(status_code=401, detail="Broker not connected. Please login first by hitting /login endpoint.")
     
-    active_positions[data.token] = {
+    state.active_positions[data.token] = {
         "target": data.target,
         "sl": data.sl,
         "tradingsymbol": data.tradingsymbol,
@@ -386,24 +179,24 @@ def set_position(data: SetTargetSLRequest):
         exch_type = get_exchange_type(data.exchange)
         subscription_list = [{"exchangeType": exch_type, "tokens": [data.token]}]
 
-        sws.subscribe("dynamic_sub", 1, subscription_list)
+        state.sws.subscribe("dynamic_sub", 1, subscription_list)
         print(f"ON: Automatically subscribed Token {data.token} ({data.tradingsymbol}) to live stream!")
     except Exception as e:
         print(f"Failed to subscribe WebSocket for token {data.token}: {e}")
-        del active_positions[data.token]
+        del state.active_positions[data.token]
         raise HTTPException(status_code=500, detail="WebSocket subscription failed")
     
     return {
         "status": "success",
         "message": f"Monitoring started for Token {data.token}",
-        "data": active_positions[data.token]
+        "data": state.active_positions[data.token]
     }
 
 @app.get("/get-positions")
 def get_positions():
 
     # Check Login Status
-    if not is_broker_connected:
+    if not state.is_broker_connected:
         raise HTTPException(status_code=401, detail="Broker not connected. Please login first by hitting /login endpoint.")
 
     try:
