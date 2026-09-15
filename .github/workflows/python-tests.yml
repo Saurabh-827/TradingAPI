@@ -30,6 +30,6 @@ jobs:
           ANGEL_API_KEY: "dummy_key"
           ANGEL_CLIENT_ID: "dummy_client"
           ANGEL_PIN: "1234"
-          ANGEL_TOTP_SECRET: "dummy_secret"
+          ANGEL_TOTP_SECRET: "ABCDEFGHIJKLMNOP"
         run: |
           pytest -v --disable-warnings
