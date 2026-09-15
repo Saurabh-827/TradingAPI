@@ -26,5 +26,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Pytest
+        env:
+          ANGEL_API_KEY: "dummy_key"
+          ANGEL_CLIENT_ID: "dummy_client"
+          ANGEL_PIN: "1234"
+          ANGEL_TOTP_SECRET: "dummy_secret"
         run: |
           pytest -v --disable-warnings
