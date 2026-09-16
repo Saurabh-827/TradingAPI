@@ -23,7 +23,13 @@ def reset_state():
 
     yield
 
-# --- 1. Test /search-token Endpoint ---
+# --- 1. Test Home Endpoint ---
+def test_home():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"message":"Welcome to the Trading API"}
+
+# --- 2. Test /search-token Endpoint ---
 def test_search_token_success():
     response = client.get("/search-token?symbol=CRUDE&exchange=MCX")
     assert response.status_code == 200
@@ -37,7 +43,7 @@ def test_search_token_not_found():
     assert response.status_code == 404
     assert response.json()["detail"] == "No token found for this symbol"
 
-# --- 2. Test /login Endpoint (Mocking External APIs) ---
+# --- 3. Test /login Endpoint (Mocking External APIs) ---
 @patch("main.smartApi.generateSession")
 @patch("main.smartApi.getfeedToken")
 @patch("main.threading.Thread") #blocking background websocket thread
@@ -56,7 +62,7 @@ def test_login_success(mock_thread, mock_feedToken, mock_generateSession):
     assert response.json()["tokens"]["jwtToken"] == "fake_jwt_token"
     assert state.is_broker_connected == True
 
-# --- 3. Test /set-position Endpoint ---
+# --- 4. Test /set-position Endpoint ---
 def test_set_position_unauthorized():
     # without login trying to set position (state.is_broker_connected is False)
     payload = {
@@ -91,3 +97,51 @@ def test_set_position_success():
     assert response.status_code == 200
     assert state.active_positions["12345"]["target"] == 6550
     assert state.active_positions["12345"]["linked_token"] == "54321"
+
+# --- 5. Test /get-positions Endpoint ---
+def test_get_positions_unauthorized():
+    # without login trying to get positions (state.is_broker_connected is False)
+    response = client.get("/get-positions")
+    assert response.status_code == 401 
+    assert "Broker not connected" in response.json()["detail"]
+
+@patch("main.smartApi.position")
+def test_get_positions_success(mock_position):
+    # bypassing login state
+    state.is_broker_connected = True
+
+    # Mocking Angel One's position response
+    mock_position.return_value = {
+        "status": True,
+        "message": "SUCCESS",
+        "data": [
+            {
+                "tradingsymbol": "CRUDEOIL24MAY6500CE",
+                "symboltoken": "12345",
+                "exchange": "MCX",
+                "netqty": "100", # Active
+                "buyavgprice": "50.5",
+                "pnl": "1500.00",
+                "producttype": "INTRADAY"
+            },
+            {
+                "tradingsymbol": "RELIANCE-EQ",
+                "symboltoken": "67890",
+                "exchange": "NSE",
+                "netqty": "0",  # Closed
+                "buyavgprice": "2900.0",
+                "pnl": "500.00",
+                "producttype": "INTRADAY"
+            }
+        ]
+    }
+
+    response = client.get("/get-positions")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "Success"
+    assert data["total_open_positions"] == 1
+    assert data["data"][0]["symbol"] == "CRUDEOIL24MAY6500CE"
+    assert data["data"][0]["net_qty"] == 100
