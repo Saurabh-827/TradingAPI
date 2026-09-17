@@ -43,6 +43,13 @@ def test_search_token_not_found():
     assert response.status_code == 404
     assert response.json()["detail"] == "No token found for this symbol"
 
+def test_search_token_unloaded():
+    state.instrument_list = []
+    response = client.get("/search-token?symbol=CRUDE&exchnage=MCX")
+
+    assert response.status_code == 500
+    assert "Instrument list not loaded yet" in response.json()["detail"]
+
 # --- 3. Test /login Endpoint (Mocking External APIs) ---
 @patch("main.smartApi.generateSession")
 @patch("main.smartApi.getfeedToken")
@@ -61,6 +68,18 @@ def test_login_success(mock_thread, mock_feedToken, mock_generateSession):
     assert response.status_code == 200
     assert response.json()["tokens"]["jwtToken"] == "fake_jwt_token"
     assert state.is_broker_connected == True
+
+@patch("main.smartApi.generateSession")
+def test_login_failure_broker_rejection(mock_generateSession):
+    mock_generateSession.return_value = {
+        "status": False,
+        "message": "Invalid Credentials"
+    }
+
+    response = client.post("/login")
+
+    assert response.status_code == 400
+    assert "Invalid Credentials" in response.json()["detail"]
 
 # --- 4. Test /set-position Endpoint ---
 def test_set_position_unauthorized():
@@ -97,6 +116,26 @@ def test_set_position_success():
     assert response.status_code == 200
     assert state.active_positions["12345"]["target"] == 6550
     assert state.active_positions["12345"]["linked_token"] == "54321"
+
+def test_set_position_websocket_crash():
+    state.is_broker_connected = True
+
+    # Force the mocked WebSocket's subscribe method to raise an error
+    state.sws.subscribe.side_effect = Exception("Mocked connection timeout")
+
+    payload = {
+        "token": "99999",
+        "target": 6550,
+        "sl": 6480,
+        "tradingsymbol": "CRUDEOIL24MAY6500CE",
+        "exchange": "MCX",
+        "quantity": 100
+    }
+    response = client.post("/set-position", json=payload)
+
+    assert response.status_code == 500
+    assert "WebSocket subscription failed" in response.json()["detail"]
+    assert "99999" not in state.active_positions
 
 # --- 5. Test /get-positions Endpoint ---
 def test_get_positions_unauthorized():
@@ -145,3 +184,18 @@ def test_get_positions_success(mock_position):
     assert data["total_open_positions"] == 1
     assert data["data"][0]["symbol"] == "CRUDEOIL24MAY6500CE"
     assert data["data"][0]["net_qty"] == 100
+
+@patch("main.smartApi.position")
+def test_get_positions_broker_rejection(mock_position):
+    state.is_broker_connected = True
+    
+    # Mock Angel One API returning a failure status
+    mock_position.return_value = {
+        "status": False,
+        "message": "Session Expired or Invalid Token"
+    }
+    
+    response = client.get("/get-positions")
+    
+    assert response.status_code == 400
+    assert "Session Expired" in response.json()["detail"]

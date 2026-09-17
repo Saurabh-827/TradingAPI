@@ -125,6 +125,8 @@ def login_broker():
                 "feedToken": feed_token
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Login Failed: {str(e)}")
 
@@ -230,5 +232,7 @@ def get_positions():
             "data": open_positions,
             "raw_data": positions_data
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching positions: {e}")
