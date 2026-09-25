@@ -1,19 +1,26 @@
-# Global state for token list
-instrument_list = []
+import threading
 
-# WebSocket Live Data State
-liv_market_data = {}
+# Global Variables
 
-# Active positions 
-active_positions = {}
-
-# Flag to check login status
-is_broker_connected = False
-
-# Global websocket instance
-sws = None
-
+instrument_list = []  # state for token list
+is_broker_connected = False  # Flag to check login status
 # --- Session Globals for Reconnection ---
 current_jwt_token  = None
 current_feed_token = None
 reconnect_attempts = 0
+
+
+# API Instances
+
+sws = None   # Global websocket instance
+api_instance = None  # Global smartapi instance stored here (AngelOne)
+
+# State Data
+active_positions = {}
+liv_market_data = {}   # WebSocket Live Data State
+
+
+# Thread Safety Lock
+state_lock = threading.Lock()
+
+

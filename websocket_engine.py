@@ -17,7 +17,7 @@ def get_exchange_type(exchange: str) -> int:
     }
     return mapping.get(exchange.upper(), 1)  # Default 1(NSE)
 
-def start_websocket_stream(smartApi_instance, API_KEY, CLIENT_ID, jwt_token, feed_token):
+def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
 
     # Initializing websocket instance
     state.sws = SmartWebSocketV2(jwt_token, API_KEY, CLIENT_ID, feed_token)
@@ -99,7 +99,7 @@ def start_websocket_stream(smartApi_instance, API_KEY, CLIENT_ID, jwt_token, fee
         if state.current_jwt_token and state.current_feed_token:
             threading.Thread(
                 target=start_websocket_stream,
-                args=(state.current_jwt_token, state.current_feed_token),
+                args=(API_KEY, CLIENT_ID, state.current_jwt_token, state.current_feed_token),
                 daemon=True
             ).start()
 

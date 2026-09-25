@@ -14,6 +14,7 @@ def reset_state():
     state.is_broker_connected = False
     state.active_positions = {}
     state.sws = MagicMock() # Mocking websocket instance
+    state.api_instance = MagicMock()
 
     # mocking data instead of downloading json
     state.instrument_list = [

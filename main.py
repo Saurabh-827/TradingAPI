@@ -81,6 +81,7 @@ if not all([API_KEY, CLIENT_ID, PIN, TOTP_SECRET]):
 
 # Creating SmartConnect instance
 smartApi = SmartConnect(api_key=API_KEY)
+state.api_instance = smartApi  # Storing global instance for later use
 
 @app.get("/")
 def home():
@@ -110,7 +111,7 @@ def login_broker():
         # Starting WebSocket in a separate thread
         ws_thread = threading.Thread(
             target=start_websocket_stream,
-            args=(auth_token, feed_token),
+            args=(API_KEY, CLIENT_ID, auth_token, feed_token),
             daemon=True  # Daemon=True means when FastAPI closes, the thread also stops processing
         )
         ws_thread.start()

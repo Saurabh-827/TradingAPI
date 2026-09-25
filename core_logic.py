@@ -37,15 +37,16 @@ def execute_exit_order(smartApi_instance, token: str, order_info: dict):
 def process_full_exit(token: str, order: dict):
     """This function will run in a background thread to prevent blocking the WebSocket"""
 
-    order_id = execute_exit_order(token, order)
+    order_id = execute_exit_order(state.api_instance, token, order)
 
     if order_id and order.get("linked_token"):
         comp_token = order["linked_token"]
 
-        if comp_token in state.active_positions and state.active_positions[comp_token]["status"] == "ACTIVE":
-            print(f"[{token}] HEDGE BROKEN! Triggering instant auto-exit for companion token {comp_token}...")
-
-            companion_order = state.active_positions[comp_token]
-            state.active_positions[comp_token]["status"] = "EXITED"
-            execute_exit_order(comp_token, companion_order)
+        with state.state_lock:
+            if comp_token in state.active_positions and state.active_positions[comp_token]["status"] == "ACTIVE":
+                print(f"[{token}] HEDGE BROKEN! Triggering instant auto-exit for companion token {comp_token}...")
+                companion_order = state.active_positions[comp_token]
+                state.active_positions[comp_token]["status"] = "EXITED"
+        
+        execute_exit_order(state.api_instance, comp_token, companion_order)
               
