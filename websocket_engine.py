@@ -53,7 +53,8 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
                     
                     if time_elapsed >= 2.5: # 2.5 seconds sustained
                         print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
-                        state.active_positions[token]["status"] = "EXITED"
+                        with state.state_lock:
+                            state.active_positions[token]["status"] = "EXITED"
                         # Here we will send the order to the broker
                         # --- DECOUPLED EXECUTION (Fire & Forget) ---
                         threading.Thread(
