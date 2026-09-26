@@ -41,6 +41,7 @@ def process_full_exit(token: str, order: dict):
 
     if order_id and order.get("linked_token"):
         comp_token = order["linked_token"]
+        companion_order = None
 
         with state.state_lock:
             if comp_token in state.active_positions and state.active_positions[comp_token]["status"] == "ACTIVE":
@@ -48,5 +49,6 @@ def process_full_exit(token: str, order: dict):
                 companion_order = state.active_positions[comp_token]
                 state.active_positions[comp_token]["status"] = "EXITED"
         
-        execute_exit_order(state.api_instance, comp_token, companion_order)
+        if companion_order:  # executing the exit order once fetched
+            execute_exit_order(state.api_instance, comp_token, companion_order)
               
