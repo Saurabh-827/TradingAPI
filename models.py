@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 # Response Models
 class TokenData(BaseModel):
@@ -19,4 +20,4 @@ class SetTargetSLRequest(BaseModel):
     quantity: int
     exit_type: str = "SELL"
     product_type: str = "INTRADAY"
-    linked_token: str = None
+    linked_token: Optional[str] = None
