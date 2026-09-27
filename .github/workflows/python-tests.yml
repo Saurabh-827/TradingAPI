@@ -31,5 +31,6 @@ jobs:
           ANGEL_CLIENT_ID: "dummy_client"
           ANGEL_PIN: "1234"
           ANGEL_TOTP_SECRET: "ABCDEFGHIJKLMNOP"
+          DATABASE_URL: "postgresql+psycopg://admin:admin123@localhost:5432/tradingdb"
         run: |
           pytest -v --disable-warnings
