@@ -1,3 +1,6 @@
+from database import engine, SessionLocal
+from db_models import Base
+from db_ops import upsert_position, load_active_positions
 from fastapi import FastAPI, HTTPException
 from SmartApi import SmartConnect
 
@@ -59,6 +62,12 @@ async def lifespan(app: FastAPI):
             print(f"Success: Loaded {len(state.instrument_list)} instruments from local cache in 1 second!")
         except Exception as e:
             print(f"Error while loading local Scrip Master {e}")
+    # Create DB Tables
+    Base.metadata.create_all(bind=engine)
+    # ACTIVE positions loading in memory from DB
+    with SessionLocal() as db:
+        state.active_positions = load_active_positions(db)
+    print(f"Loaded {len(state.active_positions)} active positions from DB")
 
     yield  # Here API goes on running
 
@@ -176,6 +185,20 @@ def set_position(data: SetTargetSLRequest):
         "breach_time": None,
         "status": "ACTIVE"
     }
+
+    # Persisting to DB
+    with SessionLocal() as db:
+        upsert_position(db, data.token, {
+            "tradingsymbol": data.tradingsymbol,
+            "exchange":      data.exchange,
+            "target":        data.target,
+            "sl":            data.sl,
+            "quantity":      data.quantity,
+            "exit_type":     data.exit_type,
+            "product_type":  data.product_type,
+            "linked_token":  data.linked_token,
+            "status":        "ACTIVE"
+        })
 
     # Dynamic Websocket subscription
     try:
