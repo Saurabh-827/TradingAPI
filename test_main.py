@@ -99,7 +99,9 @@ def test_set_position_unauthorized():
     assert response.status_code == 401
     assert "Broker not connected" in response.json()["detail"]
 
-def test_set_position_success():
+@patch("main.SessionLocal")
+@patch("main.upsert_position")
+def test_set_position_success(mock_upsert, mock_session):
 
     # mocking login to bypass
     state.is_broker_connected = True
@@ -119,7 +121,9 @@ def test_set_position_success():
     assert state.active_positions["12345"]["target"] == 6550
     assert state.active_positions["12345"]["linked_token"] == "54321"
 
-def test_set_position_websocket_crash():
+@patch("main.SessionLocal")
+@patch("main.upsert_position")
+def test_set_position_websocket_crash(mock_upsert, mock_session):
     state.is_broker_connected = True
 
     # Force the mocked WebSocket's subscribe method to raise an error
