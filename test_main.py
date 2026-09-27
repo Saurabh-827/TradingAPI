@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
+from core_logic import process_full_exit
 
 from main import app, smartApi
 import state
@@ -200,3 +201,65 @@ def test_get_positions_broker_rejection(mock_position):
     
     assert response.status_code == 400
     assert "Session Expired" in response.json()["detail"]
+
+# --- 6. Test core_logic: process_full_exit ---
+
+@patch("core_logic.update_position_status")
+@patch("core_logic.save_trade")
+@patch("core_logic.SessionLocal")
+def test_process_full_exit_target(mock_session, mock_save_trade, mock_update_status):
+    state.api_instance = MagicMock()
+    state.api_instance.placeOrder.return_value = {"status": True, "data": "ORD001"}
+    state.liv_market_data["tok1"] = 6510.0
+
+    order = {
+        "tradingsymbol": "CRUDEOIL", "exchange": "MCX", "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": None, "exit_reason": "TARGET"
+    }
+
+    process_full_exit("tok1", order)
+
+    mock_save_trade.assert_called_once_with(
+        mock_session.return_value.__enter__.return_value,
+        "tok1", "CRUDEOIL", exit_reason="TARGET", order_id="ORD001", exit_price=6510.0
+    )
+    mock_update_status.assert_called_once_with(
+        mock_session.return_value.__enter__.return_value,
+        "tok1", "EXITED"
+    )
+
+@patch("core_logic.update_position_status")
+@patch("core_logic.save_trade")
+@patch("core_logic.SessionLocal")
+def test_process_full_exit_with_companion(mock_session, mock_save_trade, mock_update_status):
+    state.api_instance = MagicMock()
+    state.api_instance.placeOrder.return_value = {"status": True, "data": "ORD002"}
+    state.liv_market_data["tok1"] = 6390.0
+    state.liv_market_data["tok2"] = 6400.0
+
+    state.active_positions["tok2"] = {
+        "tradingsymbol": "CRUDEOIL_COMP", "exchange": "MCX", "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": None, "status": "ACTIVE"
+    }
+
+    order = {
+         "tradingsymbol": "CRUDEOIL", "exchange": "MCX", "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": "tok2", "exit_reason": "SL"
+    }
+
+    process_full_exit("tok1", order)
+
+    assert mock_save_trade.call_count == 2
+    assert mock_update_status.call_count == 2
+
+    mock_save_trade.assert_any_call(
+        mock_session.return_value.__enter__.return_value,
+        "tok1", "CRUDEOIL", exit_reason="SL", order_id="ORD002", exit_price=6390.0
+    )
+    mock_save_trade.assert_any_call(
+        mock_session.return_value.__enter__.return_value,
+        "tok2", "CRUDEOIL_COMP", exit_reason="COMPANION", order_id=None, exit_price=6400.0
+    )

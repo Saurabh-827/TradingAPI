@@ -45,7 +45,7 @@ def process_full_exit(token: str, order: dict):
     with SessionLocal() as db:
         save_trade(db, token, order["tradingsymbol"], exit_reason=order.get("exit_reason","UNKNOWN"),
         order_id=order_id, exit_price=state.liv_market_data.get(token, 0))
-        update_position_status(token, "EXITED")
+        update_position_status(db, token, "EXITED")
 
     if order_id and order.get("linked_token"):
         comp_token = order["linked_token"]
