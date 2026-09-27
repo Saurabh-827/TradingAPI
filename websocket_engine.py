@@ -45,6 +45,7 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
                 # If hit for the first time, record the breach time 
                 if order['breach_time'] is None:
                     order['breach_time'] = time.time()
+                    order['exit_reason'] = "TARGET" if current_price >= order["target"] else "SL"
                     print(f"[{token}] ALERT: Price reached {current_price}. Verification started...")
 
                 # If already breached, check elapsed time

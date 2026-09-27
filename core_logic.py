@@ -1,4 +1,6 @@
 import state
+from database import SessionLocal
+from db_ops import save_trade, update_position_status
 
 def execute_exit_order(smartApi_instance, token: str, order_info: dict):
     """
@@ -39,6 +41,12 @@ def process_full_exit(token: str, order: dict):
 
     order_id = execute_exit_order(state.api_instance, token, order)
 
+    # Saving trade to DB
+    with SessionLocal() as db:
+        save_trade(db, token, order["tradingsymbol"], exit_reason=order.get("exit_reason","UNKNOWN"),
+        order_id=order_id, exit_price=state.liv_market_data.get(token, 0))
+        update_position_status(token, "EXITED")
+
     if order_id and order.get("linked_token"):
         comp_token = order["linked_token"]
         companion_order = None
@@ -51,4 +59,10 @@ def process_full_exit(token: str, order: dict):
         
         if companion_order:  # executing the exit order once fetched
             execute_exit_order(state.api_instance, comp_token, companion_order)
+            with SessionLocal() as db:
+                save_trade(db, comp_token, companion_order["tradingsymbol"],
+                exit_reason="COMPANION",
+                order_id=None,
+                exit_price=state.liv_market_data.get(comp_token))
+                update_position_status(db, comp_token, "EXITED")
               
