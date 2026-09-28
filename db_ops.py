@@ -38,3 +38,9 @@ def load_active_positions(db: Session):
         }
         for row in rows
     }
+
+def get_trade_history(db: Session, token: str = None) -> list:
+    query = db.query(TradeHistory)
+    if token:
+        query = query.filter(TradeHistory.token == token)
+    return query.order_by(TradeHistory.exited_at.desc()).all()

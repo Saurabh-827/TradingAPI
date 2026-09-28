@@ -1,6 +1,6 @@
 from database import engine, SessionLocal
 from db_models import Base
-from db_ops import upsert_position, load_active_positions
+from db_ops import upsert_position, load_active_positions, get_trade_history
 from fastapi import FastAPI, HTTPException
 from SmartApi import SmartConnect
 
@@ -260,3 +260,27 @@ def get_positions():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching positions: {e}")
+
+
+@app.get("/trade-history")
+def trade_history(token: str = None):
+    try:
+        with SessionLocal() as db:
+            trades = get_trade_history(db, token)
+        return {
+            "status": "success",
+            "total": len(trades),
+            "data": [
+                {
+                    "token": t.token,
+                    "tradingsymbol": t.tradingsymbol,
+                    "exit_reason": t.exit_reason,
+                    "exit_price": t.exit_price,
+                    "order_id": t.order_id,
+                    "exited_at": t.exited_at.isoformat() if t.exited_at else None
+                }
+                for t in trades
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching trade history: {e}")

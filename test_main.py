@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, call
+from datetime import datetime, timezone
 from core_logic import process_full_exit
 
 from main import app, smartApi
@@ -267,3 +268,46 @@ def test_process_full_exit_with_companion(mock_session, mock_save_trade, mock_up
         mock_session.return_value.__enter__.return_value,
         "tok2", "CRUDEOIL_COMP", exit_reason="COMPANION", order_id=None, exit_price=6400.0
     )
+
+# --- 7. Test /trade-history Endpoint ---
+@patch("main.SessionLocal")
+@patch("main.get_trade_history")
+def test_trade_history_all(mock_get_history, mock_session):
+    mock_trade = MagicMock()
+    mock_trade.token = "12345"
+    mock_trade.tradingsymbol = "CRUDEOIL"
+    mock_trade.exit_reason = "TARGET"
+    mock_trade.exit_price = 6510.0
+    mock_trade.order_id = "ORD001"
+    mock_trade.exited_at = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+
+    mock_get_history.return_value = [mock_trade]
+
+    response = client.get("/trade-history")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["data"][0]["exit_reason"] == "TARGET"
+    assert data["data"][0]["token"] == "12345"
+
+@patch("main.SessionLocal")
+@patch("main.get_trade_history")
+def test_trade_history_by_token(mock_get_history, mock_session):
+    mock_get_history.return_value = []
+
+    response = client.get("/trade-history?token=99999")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    mock_get_history.assert_called_once_with(mock_session.return_value.__enter__.return_value, "99999")
+
+@patch("main.SessionLocal")
+@patch("main.get_trade_history")
+def test_trade_history_db_error(mock_get_history, mock_session):
+    mock_get_history.side_effect = Exception("DB connection lost")
+
+    response = client.get("/trade-history")
+
+    assert response.status_code == 500
+    assert "Error fetching trade history" in response.json()["detail"]
