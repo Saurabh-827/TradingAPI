@@ -1,7 +1,33 @@
+# Environment
 .env
 
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
 
+# Virtual Environment
+venv/
+.venv/
+
+# Logs
 logs/
 *.log
+
+# Scrip Master cache (large file, downloaded at runtime)
+scrip_master.json
+
+# Alembic
+alembic.ini
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
