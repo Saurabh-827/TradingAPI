@@ -311,3 +311,61 @@ def test_trade_history_db_error(mock_get_history, mock_session):
 
     assert response.status_code == 500
     assert "Error fetching trade history" in response.json()["detail"]
+
+# --- 8. Test DELETE /position/{token} Endpoint ---
+@patch("main.SessionLocal")
+@patch("main.update_position_status")
+def test_delete_position_success(mock_update_status, mock_session):
+    state.active_positions["12345"] = {
+        "tradingsymbol": "CRUDEOIL24MAY6500CE", "exchange": "MCX",
+        "target": 6500, "sl": 6450, "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": None, "breach_time": None, "status": "ACTIVE"
+    }
+
+    response = client.delete("/position/12345")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert "12345" not in state.active_positions
+    mock_update_status.assert_called_once()
+
+@patch("main.SessionLocal")
+@patch("main.update_position_status")
+def test_delete_position_not_found(mock_update_status, mock_session):
+    response = client.delete("/position/99999")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"]
+
+@patch("main.SessionLocal")
+@patch("main.update_position_status")
+def test_delete_position_unsubscribe_failure_non_critical(mock_update_status, mock_session):
+    state.active_positions["12345"] = {
+        "tradingsymbol": "CRUDEOIL24MAY6500CE", "exchange": "MCX",
+        "target": 6500, "sl": 6450, "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": None, "breach_time": None, "status": "ACTIVE"
+    }
+    state.sws.unsubscribe.side_effect = Exception("WS disconnected")
+
+    response = client.delete("/position/12345")
+
+    assert response.status_code == 200
+    assert "12345" not in state.active_positions
+
+@patch("main.SessionLocal")
+@patch("main.update_position_status")
+def test_delete_position_db_failure(mock_update_status, mock_session):
+    state.active_positions["12345"] = {
+        "tradingsymbol": "CRUDEOIL24MAY6500CE", "exchange": "MCX",
+        "target": 6500, "sl": 6450, "quantity": 100,
+        "exit_type": "SELL", "product_type": "INTRADAY",
+        "linked_token": None, "breach_time": None, "status": "ACTIVE"
+    }
+    mock_update_status.side_effect = Exception("DB connection lost")
+
+    response = client.delete("/position/12345")
+
+    assert response.status_code == 500
+    assert "Error deleting position" in response.json()["detail"]

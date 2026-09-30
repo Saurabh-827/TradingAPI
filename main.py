@@ -1,6 +1,6 @@
 from database import engine, SessionLocal
 from db_models import Base
-from db_ops import upsert_position, load_active_positions, get_trade_history
+from db_ops import upsert_position, load_active_positions, get_trade_history, update_position_status
 from fastapi import FastAPI, HTTPException
 from SmartApi import SmartConnect
 
@@ -284,3 +284,27 @@ def trade_history(token: str = None):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching trade history: {e}")
+
+@app.delete("/position/{token}")
+def delete_position(token: str):
+    try:
+        with state.state_lock:
+            if token not in state.active_positions:
+                raise HTTPException(status_code=404, detail=f"Token {token} not found in active positions")
+            exchange = state.active_positions[token].get("exchange", "NSE")
+            del state.active_positions[token]
+
+        with SessionLocal() as db:
+            update_position_status(db, token, "EXITED")
+        
+        try:
+            exch_type = get_exchange_type(state.active_positions.get(token, {}).get("exchange", "NSE"))
+            state.sws.unsubscribe("dynamic_sub", 1, [{"exchangeType": exch_type, "tokens": [token]}])
+        except Exception as e:
+            print(f"[{token}] WebSocket unsubscribe failed (non-critical): {e}")
+        
+        return {"status": "success", "message": f"Position {token} removed from monitoring"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting position: {e}")
