@@ -1,13 +1,16 @@
 import state
 from database import SessionLocal
 from db_ops import save_trade, update_position_status
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 def execute_exit_order(smartApi_instance, token: str, order_info: dict):
     """
     Places a MARKET EXIT order via Angel One SmartApi when target or SL is confirmed.
     """
     try:
-        print(f"[{token}] INITIATING REAL EXIT ORDER...")
+        logger.info("[%s] Initiating exit order", token)
         
         orderparams = {
             "variety": "NORMAL",
@@ -26,14 +29,14 @@ def execute_exit_order(smartApi_instance, token: str, order_info: dict):
         
         if response and response.get("status"):
             order_id = response.get("data")
-            print(f"[{token}] ORDER EXECUTED SUCCESSFULLY! Order ID: {order_id}")
+            logger.info("[%s] Order executed successfully. Order ID: %s", token, order_id)
             return order_id
         else:
-            print(f"[{token}] BROKER REJECTED ORDER: {response.get('message')}")
+            logger.warning("[%s] Broker rejected order: %s", token, response.get("message"))
             return None
 
     except Exception as e:
-        print(f"[{token}] CRITICAL ORDER FAILED: {str(e)}")
+        logger.error("[%s] Order failed: %s", token, e)
         return None
 
 def process_full_exit(token: str, order: dict):
@@ -53,7 +56,7 @@ def process_full_exit(token: str, order: dict):
 
         with state.state_lock:
             if comp_token in state.active_positions and state.active_positions[comp_token]["status"] == "ACTIVE":
-                print(f"[{token}] HEDGE BROKEN! Triggering instant auto-exit for companion token {comp_token}...")
+                logger.info("[%s] Hedge broken. Triggering auto-exit for companion token %s", token, comp_token)
                 companion_order = state.active_positions[comp_token]
                 state.active_positions[comp_token]["status"] = "EXITED"
         

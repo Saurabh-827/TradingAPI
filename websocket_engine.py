@@ -5,6 +5,9 @@ from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 import state
 from core_logic import process_full_exit
 
+from logger import get_logger
+logger = get_logger(__name__)
+
 def get_exchange_type(exchange: str) -> int:
     """Angel one convert exchange's strings to numeric id"""
     mapping = {
@@ -46,14 +49,14 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
                 if order['breach_time'] is None:
                     order['breach_time'] = time.time()
                     order['exit_reason'] = "TARGET" if current_price >= order["target"] else "SL"
-                    print(f"[{token}] ALERT: Price reached {current_price}. Verification started...")
+                    logger.info("[%s] ALERT: Price breach detected at %.2f. Verification started", token, current_price)
 
                 # If already breached, check elapsed time
                 else:
                     time_elapsed = time.time() - order["breach_time"]
                     
                     if time_elapsed >= 2.5: # 2.5 seconds sustained
-                        print(f"[{token}] CONFIRMED: Price sustained at {current_price} for 2.5s. Executing REAL EXIT!")
+                        logger.info("[%s] Price sustained at %.2f for 2.5s. Executing exit", token, current_price)
                         with state.state_lock:
                             state.active_positions[token]["status"] = "EXITED"
                         # Here we will send the order to the broker
@@ -66,17 +69,17 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
             else:
                 # Condition 2: If price returns to normal range (Fake Spike)
                 if order["breach_time"] is not None:
-                    print(f"[{token}] FAKE SPIKE DETECTED & IGNORED! Price returned to {current_price}.")
+                    logger.info("[%s] Fake spike ignored. Price returned to %.2f", token, current_price)
                     order["breach_time"] = None # Time reset
 
     def on_open(wsapp):
         state.reconnect_attempts = 0  # Reset reconnect counter on successful connect
 
-        print("Websocket connected successfully. Waiting for dynamic subscriptions...")
+        logger.info("WebSocket connected successfully")
         # --- AUTO-RESUBSCRIBE ---
 
         if state.active_positions:
-            print("Restoring active subscriptions after connection...")
+            logger.info("Restoring active subscriptions after reconnect")
             for token, pos_data in state.active_positions.items():
                 if pos_data["status"] == "ACTIVE":
                     exch_type = get_exchange_type(pos_data["exchange"])
@@ -84,18 +87,18 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
 
                     try:
                         state.sws.subscribe("dynamic_sub", 1, subscription_list)
-                        print(f"   -> Resubscribed Token: {token}")
+                        logger.info("Resubscribed token: %s", token)
                     except Exception as e:
-                        print(f"   -> Failed to resubscribe {token}: {e}")
+                        logger.error("Failed to resubscribe token %s: %s", token, e)
 
     def on_error(wsapp, error):
-        print(f"Websocket Error: {error}")
+        logger.error("WebSocket error: %s", error)
 
     def trigger_reconnect():
         state.reconnect_attempts += 1
 
         wait_time = min(state.reconnect_attempts * 5, 30) 
-        print(f"Connection lost! Attempting reconnect {state.reconnect_attempts} in {wait_time} seconds...")
+        logger.warning("Connection lost. Reconnect attempt %d in %ds", state.reconnect_attempts, wait_time)
         time.sleep(wait_time)
 
         if state.current_jwt_token and state.current_feed_token:
@@ -106,7 +109,7 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
             ).start()
 
     def on_close(wsapp):
-        print("Websocket connection closed")
+        logger.info("Websocket connection closed")
 
         threading.Thread(target=trigger_reconnect, daemon=True).start()
 
@@ -119,4 +122,4 @@ def start_websocket_stream(API_KEY, CLIENT_ID, jwt_token, feed_token):
     try:
         state.sws.connect()
     except Exception as e:
-        print(f"Critical Error: WebSocket failed to connect or crashed - {str(e)}")
+        logger.critical("WebSocket failed to connect or crashed: %s", e)

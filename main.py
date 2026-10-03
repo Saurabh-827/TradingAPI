@@ -16,6 +16,9 @@ import pyotp
 import os
 from dotenv import load_dotenv
 
+from logger import get_logger
+logger = get_logger(__name__)
+
 #local imports
 import state
 from models import LoginResponse, SetTargetSLRequest
@@ -39,10 +42,10 @@ async def lifespan(app: FastAPI):
 
         if file_date == today_date:
             download_needed = False
-            print("Local Scrip Master found for today. Loading from disk...")
+            logger.info("Local Scrip Master found for today. Loading from disk")
 
     if download_needed:
-        print("Downloading Angel One Scrip Master (this might take 10-15 seconds)....")
+        logger.info("Downloading Angel One Scrip Master")
         try:
             url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
             response = requests.get(url)
@@ -51,28 +54,28 @@ async def lifespan(app: FastAPI):
             # Save it locally for next time
             with open(file_path, "w") as f:
                 json.dump(state.instrument_list, f)
-            print(f"Success: Downloaded and saved {len(state.instrument_list)} instruments locally!")
+            logger.info("Downloaded and saved %d instruments", len(state.instrument_list))
         except Exception as e:
-            print(f"Error while loading Scrip Master {e}")
+            logger.error("Error loading Scrip Master: %s", e)
     else:
         # Load from local file
         try:
             with open(file_path, "r") as f:
                 state.instrument_list = json.load(f)
-            print(f"Success: Loaded {len(state.instrument_list)} instruments from local cache in 1 second!")
+            logger.info("Loaded %d instruments from local cache", len(state.instrument_list))
         except Exception as e:
-            print(f"Error while loading local Scrip Master {e}")
+            logger.error("Error loading local Scrip Master: %s", e)
     # Create DB Tables
     Base.metadata.create_all(bind=engine)
     # ACTIVE positions loading in memory from DB
     with SessionLocal() as db:
         state.active_positions = load_active_positions(db)
-    print(f"Loaded {len(state.active_positions)} active positions from DB")
+    logger.info("Loaded %d active positions from DB", len(state.active_positions))
 
     yield  # Here API goes on running
 
     # Shutdown logic - on app close
-    print("Clear instrument memory...")
+    logger.info("Clearing instrument memory on shutdown")
     state.instrument_list.clear()
 
 # FastAPI instance created with lifespan
@@ -206,9 +209,12 @@ def set_position(data: SetTargetSLRequest):
         subscription_list = [{"exchangeType": exch_type, "tokens": [data.token]}]
 
         state.sws.subscribe("dynamic_sub", 1, subscription_list)
-        print(f"ON: Automatically subscribed Token {data.token} ({data.tradingsymbol}) to live stream!")
+        safe_token = str(data.token).strip().replace("\n", "").replace("\r", "")
+        safe_symbol = str(data.tradingsymbol).strip().replace("\n", "").replace("\r", "")
+        logger.info("Subscribed token %s (%s) to live stream", safe_token, safe_symbol)
+
     except Exception as e:
-        print(f"Failed to subscribe WebSocket for token {data.token}: {e}")
+        logger.error("WebSocket subscription failed for token %s: %s", data.token, e)
         del state.active_positions[data.token]
         raise HTTPException(status_code=500, detail="WebSocket subscription failed")
     
@@ -301,7 +307,8 @@ def delete_position(token: str):
             exch_type = get_exchange_type(state.active_positions.get(token, {}).get("exchange", "NSE"))
             state.sws.unsubscribe("dynamic_sub", 1, [{"exchangeType": exch_type, "tokens": [token]}])
         except Exception as e:
-            print(f"[{token}] WebSocket unsubscribe failed (non-critical): {e}")
+            safe_token = str(token).strip().replace("\n", "").replace("\r", "")
+            logger.warning("[%s] WebSocket unsubscribe failed (non-critical): %s", safe_token, e)
         
         return {"status": "success", "message": f"Position {token} removed from monitoring"}
     except HTTPException:
