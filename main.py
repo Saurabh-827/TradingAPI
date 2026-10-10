@@ -176,18 +176,19 @@ def set_position(data: SetTargetSLRequest):
     if not state.is_broker_connected or state.sws is None:
         raise HTTPException(status_code=401, detail="Broker not connected. Please login first by hitting /login endpoint.")
     
-    state.active_positions[data.token] = {
-        "target": data.target,
-        "sl": data.sl,
-        "tradingsymbol": data.tradingsymbol,
-        "exchange": data.exchange,
-        "quantity": data.quantity,
-        "exit_type": data.exit_type,
-        "product_type": data.product_type,
-        "linked_token": data.linked_token,
-        "breach_time": None,
-        "status": "ACTIVE"
-    }
+    with state.state_lock:
+        state.active_positions[data.token] = {
+            "target": data.target,
+            "sl": data.sl,
+            "tradingsymbol": data.tradingsymbol,
+            "exchange": data.exchange,
+            "quantity": data.quantity,
+            "exit_type": data.exit_type,
+            "product_type": data.product_type,
+            "linked_token": data.linked_token,
+            "breach_time": None,
+            "status": "ACTIVE"
+        }
 
     # Persisting to DB
     with SessionLocal() as db:
@@ -304,7 +305,7 @@ def delete_position(token: str):
             update_position_status(db, token, "EXITED")
         
         try:
-            exch_type = get_exchange_type(state.active_positions.get(token, {}).get("exchange", "NSE"))
+            exch_type = get_exchange_type(exchange)
             state.sws.unsubscribe("dynamic_sub", 1, [{"exchangeType": exch_type, "tokens": [token]}])
         except Exception as e:
             safe_token = str(token).strip().replace("\n", "").replace("\r", "")
