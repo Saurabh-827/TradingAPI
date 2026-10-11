@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, DateTime
+from sqlalchemy import Column, String, Float, Integer, DateTime, UniqueConstraint
 from datetime import datetime, timezone
 from database import Base
 
@@ -25,5 +25,5 @@ class TradeHistory(Base):
     tradingsymbol = Column(String, nullable=False)
     exit_reason   = Column(String, nullable=False) # TARGET | SL | COMPANION
     exit_price    = Column(Float, nullable=True)
-    order_id      = Column(String, nullable=True)
+    order_id      = Column(String, nullable=True, unique=True)  # idempotency key: prevents duplicate order execution
     exited_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
